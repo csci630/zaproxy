@@ -301,7 +301,7 @@ public class ContextAPI extends ApiImplementor {
         return ApiResponseElement.OK;
     }
     
-    private ApiResponse handleIncludeAllTechs(Context context) throws ApiException {
+    private ApiResponse handleIncludeAllTechs(Context context) {
         TechSet techSet = new TechSet(Tech.getAll());
         context.setTechSet(techSet);
         context.save();
@@ -316,7 +316,7 @@ public class ContextAPI extends ApiImplementor {
         return ApiResponseElement.OK;
     }
     
-    private ApiResponse handleExcludeAllTechs(Context context) throws ApiException {
+    private ApiResponse handleExcludeAllTechs(Context context) {
         TechSet techSet = context.getTechSet();
         for (Tech tech : Tech.getAll()) {
             techSet.exclude(tech);
