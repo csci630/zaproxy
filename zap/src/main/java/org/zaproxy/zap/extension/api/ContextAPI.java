@@ -176,7 +176,7 @@ public class ContextAPI extends ApiImplementor {
             case ACTION_NEW_CONTEXT:
                 return handleNewContext(params);
             case ACTION_REMOVE_CONTEXT:
-                return handleRemoveContext(params, context);
+                return handleRemoveContext(context);
             case ACTION_SET_CONTEXT_IN_SCOPE:
                 return handleSetContextInScope(params, context);
             case ACTION_IMPORT_CONTEXT:
@@ -186,11 +186,11 @@ public class ContextAPI extends ApiImplementor {
             case ACTION_INCLUDE_TECHS:
                 return handleIncludeTechs(params, context);
             case ACTION_INCLUDE_ALL_TECHS:
-                return handleIncludeAllTechs(params, context);
+                return handleIncludeAllTechs(context);
             case ACTION_EXCLUDE_TECHS:
                 return handleExcludeTechs(params, context);
             case ACTION_EXCLUDE_ALL_TECHS:
-                return handleExcludeAllTechs(params, context);
+                return handleExcludeAllTechs(context);
             default:
                 throw new ApiException(Type.BAD_ACTION);
         }
@@ -198,7 +198,7 @@ public class ContextAPI extends ApiImplementor {
     
     private ApiResponse handleExcludeFromContext(JSONObject params, Context context) throws ApiException {
     	try {
-            addExcludeToContext(getContext(params), params.getString(REGEX_PARAM));
+            addExcludeToContext(context, params.getString(REGEX_PARAM));
             return ApiResponseElement.OK;
         } catch (IllegalArgumentException e) {
             throw new ApiException(ApiException.Type.ILLEGAL_PARAMETER, REGEX_PARAM, e);
@@ -207,7 +207,7 @@ public class ContextAPI extends ApiImplementor {
     
     private ApiResponse handleIncludeInContext(JSONObject params, Context context) throws ApiException {
     	try {
-            addIncludeToContext(getContext(params), params.getString(REGEX_PARAM));
+            addIncludeToContext(context, params.getString(REGEX_PARAM));
             return ApiResponseElement.OK;
         } catch (IllegalArgumentException e) {
             throw new ApiException(ApiException.Type.ILLEGAL_PARAMETER, REGEX_PARAM, e);
@@ -257,12 +257,12 @@ public class ContextAPI extends ApiImplementor {
         return new ApiResponseElement(CONTEXT_ID, String.valueOf(context.getId()));
     }
     
-    private ApiResponse handleRemoveContext(JSONObject params, Context context) throws ApiException {
+    private ApiResponse handleRemoveContext(Context context) {
         Model.getSingleton().getSession().deleteContext(context);
         return ApiResponseElement.OK;
     }
     
-    private ApiResponse handleSetContextInScope(JSONObject params, Context context) throws ApiException {
+    private ApiResponse handleSetContextInScope(JSONObject params, Context context) {
         context.setInScope(params.getBoolean(IN_SCOPE));
         Model.getSingleton().getSession().saveContext(context);
         return ApiResponseElement.OK;
@@ -301,7 +301,7 @@ public class ContextAPI extends ApiImplementor {
         return ApiResponseElement.OK;
     }
     
-    private ApiResponse handleIncludeAllTechs(JSONObject params, Context context) throws ApiException {
+    private ApiResponse handleIncludeAllTechs(Context context) throws ApiException {
         TechSet techSet = new TechSet(Tech.getAll());
         context.setTechSet(techSet);
         context.save();
@@ -316,7 +316,7 @@ public class ContextAPI extends ApiImplementor {
         return ApiResponseElement.OK;
     }
     
-    private ApiResponse handleExcludeAllTechs(JSONObject params, Context context) throws ApiException {
+    private ApiResponse handleExcludeAllTechs(Context context) throws ApiException {
         TechSet techSet = context.getTechSet();
         for (Tech tech : Tech.getAll()) {
             techSet.exclude(tech);
