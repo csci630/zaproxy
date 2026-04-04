@@ -97,18 +97,18 @@ public class ScanProgressTableModel extends AbstractTableModel {
     public Object getValueAt(int row, int col) {
         // 1st row is for the Analyser, 2nd row is empty (for separation with the plugins), 3rd for plugin label.
         if (row == ANALYSER_ROW) {
-            getAnalyserRowValue(col);
+            return getAnalyserRowValue(col);
         } else if (row == TOP_SEPARATOR_ROW) {
             return null;
         } else if (row == PLUGIN_HEADER_ROW) {
-            getPluginHeaderName(col);
+            return getPluginHeaderName(col);
         }
         // Adjust row for the plugin checks.
         row -= FIRST_PLUGIN_ROW_OFFSET;
         // First check if we're showing the plugin status list
         if (row < values.size()) {
             // It's an entry so show the correct values
-            getPluginStatusRowValue(row, col);
+            return getPluginStatusRowValue(row, col);
         // We're in the summary "region", first print an empty line and then two line of summary (tot time and to requests)
         // Maybe could be done in a better way, for example using a dedicated panel positioned on top/bottom of the dialog
         } else if (row == values.size()) {
@@ -116,7 +116,7 @@ public class ScanProgressTableModel extends AbstractTableModel {
             return null;
         } else if (row == (values.size() + TOTALS_ROW_OFFSET_FROM_PLUGIN_END)) {
             // The second line after values should contains the totals
-            getTotalsRowValue(col);
+            return getTotalsRowValue(col);
         }
         return null;
     }
