@@ -609,18 +609,10 @@ public abstract class StandardFieldsDialog extends AbstractDialog {
                 this.getMainPanel(), this.fieldList.size(), fieldLabel, field, wrapper, weighty);
     }
 
-    public void addTextField(String fieldLabel, String value) {
-        addTextComponent(new ZapTextField(), fieldLabel, value);
-    }
-
     private void addTextComponent(JTextComponent field, String fieldLabel, String value) {
         validateNotTabbed();
         setTextAndDiscardEdits(field, value);
         this.addField(fieldLabel, field, field, 0.0D);
-    }
-
-    public void addTextField(int tabIndex, String fieldLabel, String value) {
-        addTextComponent(tabIndex, new ZapTextField(), fieldLabel, value);
     }
 
     private void addTextComponent(
@@ -761,9 +753,9 @@ public abstract class StandardFieldsDialog extends AbstractDialog {
         this.incTabOffset(tabIndex);
     }
 
-    public void addComboField(String fieldLabel, String[] choices, String value) {
-        this.addComboField(fieldLabel, choices, value, false);
-    }
+    public void addComboField(String fieldLabel, JComboBox<?> comboBox) {
+        addBuiltField(null, buildComboFieldSpec(fieldLabel, comboBox));
+    }   
 
     public void addComboField(String fieldLabel, String[] choices, String value, boolean editable) {
         validateNotTabbed();
@@ -796,8 +788,8 @@ public abstract class StandardFieldsDialog extends AbstractDialog {
         this.addField(fieldLabel, field, field, 0.0D);
     }
 
-    public void addComboField(int tabIndex, String fieldLabel, String[] choices, String value) {
-        this.addComboField(tabIndex, fieldLabel, choices, value, false);
+    public void addComboField(int tabIndex, String fieldLabel, JComboBox<?> comboBox) {
+        addBuiltField(tabIndex, buildComboFieldSpec(fieldLabel, comboBox));
     }
 
     public void addComboField(
@@ -2283,4 +2275,57 @@ public abstract class StandardFieldsDialog extends AbstractDialog {
      *     null} if there are no errors.
      */
     public abstract String validateFields();
+
+    private static class DialogFieldSPec{
+        private final Sting label;
+        private final JComponent field;
+        private final JComponent wrapper;
+        private final double weight;
+
+        DialogFieldSpec(String label, JComponent field, JComponent wrapper, double weighty){
+            this.label = label;
+            this.field = field;
+            this.wrapper = wrapper;
+            this.weighty = weighty;
+        }
+    }
+
+    private void addBuiltField(Integer tabIndex, DialogFieldSpec spec){
+        if (tabIndex == null){
+            validateNotTabbed();
+            addField(spec.label, spec.field, spec.wrapper, spec.weighty);
+            return;
+        }
+
+        validateTabbed(tabIndex);
+        addField(
+            tabPanels.get(tabIndex),
+            tabOffsets.get(tabIndex),
+            spec.label,
+            spec.field,
+            spec.wrapper,
+            spec.weighty
+        );
+
+        incTabOffset(tabIndex);
+    }
+
+    private DialogFieldSpec buildTextFieldSpec(String fieldLabel, String value){
+        JTextField field = new JTextField();
+        field.setText(value);
+        return new DialogFieldSPec(fieldLabel, field, field, 0.0);
+    }
+
+    public void addTextField(String fieldLabel, String value){
+        addBuiltField(null, buildTextFieldSpec(fieldLabel, value));
+    }
+
+    public void addTextField(int tabIndex, String fieldLabel, String value){
+        addBuiltField(tabIndex, buildTextFieldSpec(fieldLabel, value));
+    }
+
+    private DialogFieldSpec buildComboFieldSpec(String fieldLabel, JComboBox<?> comboBox){
+        return new DialogFieldSPec(fieldLabel, comboBox, comboBox, 0.0);
+    }
+
 }
