@@ -105,6 +105,9 @@ public class CoreAPI extends ApiImplementor implements SessionListener {
     private static final String ACTION_SAVE_SESSION = "saveSession";
     private static final String ACTION_SNAPSHOT_SESSION = "snapshotSession";
 
+    private final Map<String, ApiActionCommand> actionCommands = new HashMap<>();
+    private final Map<String, ApiViewCommand> viewCommands = new HashMap<>();
+
     private static final String ACTION_ACCESS_URL = "accessUrl";
     private static final String ACTION_SHUTDOWN = "shutdown";
     private static final String ACTION_EXCLUDE_FROM_PROXY = "excludeFromProxy";
@@ -495,6 +498,20 @@ public class CoreAPI extends ApiImplementor implements SessionListener {
         addApiAction(
                 deprecatedNetworkApi(new ApiAction("setOptionUseProxyChainAuth", PARAMS_BOOLEAN)));
         addApiAction(deprecatedNetworkApi(new ApiAction("setOptionUseSocksProxy", PARAMS_BOOLEAN)));
+
+        registerActionCommands();
+        registerViewCommands();
+    }
+
+    private void registerActionCommands(){
+        actionCommands.put(ACTION_SAVE_SESSION.toLowerCase(), this::handleSaveSession);
+    }
+
+    private void registerViewCommands(){
+        viewCommands.put(VIEW_HOSTS, this::handleHostsView);
+        viewCommands.put(VIEW_SITES, this::handleSitesView);
+        viewCommands.put(VIEW_URLS, this::handleUrlsView);
+        viewCommands.put(VIEW_CHILD_NODES, this::handleChildNodesView);
     }
 
     private <T extends ApiElement> T deprecatedNetworkApi(T element) {
@@ -526,6 +543,11 @@ public class CoreAPI extends ApiImplementor implements SessionListener {
 
     @Override
     public ApiResponse handleApiAction(String name, JSONObject params) throws ApiException {
+
+        ApiActionCommand command = actionCommands.get(name.toLowerCase());
+        if(command != null){
+            return command.execute(params);
+        }
 
         Session session = Model.getSingleton().getSession();
 
@@ -574,158 +596,6 @@ public class CoreAPI extends ApiImplementor implements SessionListener {
                     };
             thread.start();
 
-        } else if (ACTION_SAVE_SESSION.equalsIgnoreCase(
-                name)) { // Ignore case for backwards compatibility
-            Path sessionPath = getSessionPath(params.getString(PARAM_SESSION));
-            String filename = sessionPath.toAbsolutePath().toString();
-
-            final boolean overwrite = getParam(params, PARAM_OVERWRITE_SESSION, false);
-
-            if (Files.exists(sessionPath)) {
-                boolean sameSession = false;
-                if (overwrite && !session.isNewState()) {
-                    try {
-                        sameSession =
-                                Files.isSameFile(Paths.get(session.getFileName()), sessionPath);
-                    } catch (IOException e) {
-                        LOGGER.error("Failed to check if same session path:", e);
-                        throw new ApiException(ApiException.Type.INTERNAL_ERROR, e.getMessage());
-                    }
-                }
-
-                if (!overwrite || sameSession) {
-                    throw new ApiException(ApiException.Type.ALREADY_EXISTS, filename);
-                }
-            }
-            this.savingSession = true;
-            try {
-                Control.getSingleton().saveSession(filename, this);
-            } catch (Exception e) {
-                LOGGER.error("Failed to save the session:", e);
-                this.savingSession = false;
-                throw new ApiException(ApiException.Type.INTERNAL_ERROR, e.getMessage());
-            }
-            // Wait for notification that its worked ok
-            try {
-                while (this.savingSession) {
-                    Thread.sleep(200);
-                }
-            } catch (InterruptedException e) {
-                // Probably not an error
-                LOGGER.debug(e.getMessage(), e);
-            }
-            LOGGER.debug("Can now return after saving session");
-
-        } else if (ACTION_SNAPSHOT_SESSION.equalsIgnoreCase(
-                name)) { // Ignore case for backwards compatibility
-            if (session.isNewState()) {
-                throw new ApiException(ApiException.Type.DOES_NOT_EXIST);
-            }
-
-            List<String> actions = Control.getSingleton().getExtensionLoader().getActiveActions();
-            if (!actions.isEmpty()) {
-                throw new ApiException(
-                        ApiException.Type.BAD_STATE,
-                        "Active actions prevent the session snapshot: " + actions);
-            }
-
-            String fileName = ApiUtils.getOptionalStringParam(params, PARAM_SESSION);
-
-            if (fileName == null || fileName.isEmpty()) {
-                fileName = session.getFileName();
-
-                if (fileName.endsWith(".session")) {
-                    fileName = fileName.substring(0, fileName.length() - 8);
-                }
-                fileName += "-" + dateFormat.format(new Date()) + ".session";
-            } else {
-                Path sessionPath = getSessionPath(fileName);
-                fileName = sessionPath.toAbsolutePath().toString();
-
-                if (Files.exists(sessionPath)) {
-                    final boolean overwrite = getParam(params, PARAM_OVERWRITE_SESSION, false);
-                    boolean sameSession = false;
-                    try {
-                        sameSession =
-                                Files.isSameFile(Paths.get(session.getFileName()), sessionPath);
-                    } catch (IOException e) {
-                        LOGGER.error("Failed to check if same session path:", e);
-                        throw new ApiException(ApiException.Type.INTERNAL_ERROR, e.getMessage());
-                    }
-
-                    if (!overwrite || sameSession) {
-                        throw new ApiException(ApiException.Type.ALREADY_EXISTS, fileName);
-                    }
-                }
-            }
-
-            this.savingSession = true;
-            try {
-                Control.getSingleton().snapshotSession(fileName, this);
-            } catch (Exception e) {
-                LOGGER.error("Failed to snapshot the session:", e);
-                this.savingSession = false;
-                throw new ApiException(ApiException.Type.INTERNAL_ERROR, e.getMessage());
-            }
-            // Wait for notification that its worked ok
-            try {
-                while (this.savingSession) {
-                    Thread.sleep(200);
-                }
-            } catch (InterruptedException e) {
-                // Probably not an error
-                LOGGER.debug(e.getMessage(), e);
-            }
-            LOGGER.debug("Can now return after saving session");
-
-        } else if (ACTION_LOAD_SESSION.equalsIgnoreCase(
-                name)) { // Ignore case for backwards compatibility
-            Path sessionPath = getSessionPath(params.getString(PARAM_SESSION));
-            String filename = sessionPath.toAbsolutePath().toString();
-
-            if (!Files.exists(sessionPath)) {
-                throw new ApiException(ApiException.Type.DOES_NOT_EXIST, filename);
-            }
-            try {
-                Control.getSingleton().runCommandLineOpenSession(filename);
-            } catch (Exception e) {
-                LOGGER.error("Failed to load the session:", e);
-                throw new ApiException(ApiException.Type.INTERNAL_ERROR, e.getMessage());
-            }
-
-        } else if (ACTION_NEW_SESSION.equalsIgnoreCase(
-                name)) { // Ignore case for backwards compatibility
-            String sessionName = null;
-            try {
-                sessionName = params.getString(PARAM_SESSION);
-            } catch (Exception e1) {
-                // Ignore
-            }
-            if (sessionName == null || sessionName.length() == 0) {
-                // Create a new 'unnamed' session
-                Control.getSingleton().discardSession();
-                try {
-                    Control.getSingleton().newSession();
-                } catch (Exception e) {
-                    LOGGER.error("Failed to create a new session:", e);
-                    throw new ApiException(ApiException.Type.INTERNAL_ERROR, e.getMessage());
-                }
-            } else {
-                Path sessionPath = getSessionPath(sessionName);
-                String filename = sessionPath.toAbsolutePath().toString();
-
-                final boolean overwrite = getParam(params, PARAM_OVERWRITE_SESSION, false);
-
-                if (Files.exists(sessionPath) && !overwrite) {
-                    throw new ApiException(ApiException.Type.ALREADY_EXISTS, filename);
-                }
-                try {
-                    Control.getSingleton().runCommandLineNewSession(filename);
-                } catch (Exception e) {
-                    LOGGER.error("Failed to create a new session:", e);
-                    throw new ApiException(ApiException.Type.INTERNAL_ERROR, e.getMessage());
-                }
-            }
         } else if (ACTION_CLEAR_EXCLUDED_FROM_PROXY.equals(name)) {
             try {
                 session.setExcludeFromProxyRegexs(new ArrayList<>());
@@ -925,9 +795,11 @@ public class CoreAPI extends ApiImplementor implements SessionListener {
                         "Invalid log level: \"" + newLevel + "\"");
             }
             Configurator.setLevel(logName, logLevel);
+
         } else {
             throw new ApiException(ApiException.Type.BAD_ACTION);
         }
+
         return ApiResponseElement.OK;
     }
 
@@ -948,6 +820,52 @@ public class CoreAPI extends ApiImplementor implements SessionListener {
             throw new ApiException(ApiException.Type.ILLEGAL_PARAMETER, PARAM_FILENAME);
         }
         return childPath;
+    }
+
+    private ApiResponse handleSaveSession(JSONObject params) throws ApiException {
+        Session session = Model.getSingleton().getSession();
+
+        Path sessionPath = getSessionPath(params.getString(PARAM_SESSION));
+        String filename = sessionPath.toAbsolutePath().toString();
+
+        final boolean overwrite = getParam(params, PARAM_OVERWRITE_SESSION, false);
+
+        if (Files.exists(sessionPath)) {
+            boolean sameSession = false;
+            if (overwrite && !session.isNewState()) {
+                try {
+                    sameSession = Files.isSameFile(Paths.get(session.getFileName()), sessionPath);
+                } catch (IOException e) {
+                    LOGGER.error("Failed to check if same session path:", e);
+                    throw new ApiException(ApiException.Type.INTERNAL_ERROR, e.getMessage());
+                }
+            }
+
+            if (!overwrite || sameSession) {
+                throw new ApiException(ApiException.Type.ALREADY_EXISTS, filename);
+            }
+        }
+
+        this.savingSession = true;
+        try {
+            Control.getSingleton().saveSession(filename, this);
+        } catch (Exception e) {
+            LOGGER.error("Failed to save the session:", e);
+            this.savingSession = false;
+            throw new ApiException(ApiException.Type.INTERNAL_ERROR, e.getMessage());
+        }
+
+        try {
+            while (this.savingSession) {
+                Thread.sleep(200);
+            }
+        } catch (InterruptedException e) {
+            LOGGER.debug(e.getMessage(), e);
+        }
+
+        LOGGER.debug("Can now return after saving session");
+        
+        return ApiResponseElement.OK;
     }
 
     private static Path getSessionPath(String path) throws ApiException {
@@ -1142,65 +1060,12 @@ public class CoreAPI extends ApiImplementor implements SessionListener {
         Model model = Model.getSingleton();
         Session session = model.getSession();
 
-        if (VIEW_HOSTS.equals(name)) {
-            result = new ApiResponseList(name);
-            SiteNode root = session.getSiteTree().getRoot();
-            @SuppressWarnings("unchecked")
-            Enumeration<TreeNode> en = root.children();
-            while (en.hasMoreElements()) {
-                String site = ((SiteNode) en.nextElement()).getNodeName();
-                if (site.indexOf("//") >= 0) {
-                    site = site.substring(site.indexOf("//") + 2);
-                }
-                if (site.indexOf(":") >= 0) {
-                    site = site.substring(0, site.indexOf(":"));
-                }
-                ((ApiResponseList) result).addItem(new ApiResponseElement("host", site));
-            }
-        } else if (VIEW_SITES.equals(name)) {
-            ApiResponseList sitesList = new ApiResponseList(name);
-            StructuralNode root = SessionStructure.getRootNode(model);
-            if (root != null) {
-                for (Iterator<StructuralNode> it = root.getChildIterator(); it.hasNext(); ) {
-                    sitesList.addItem(new ApiResponseElement("site", it.next().getName()));
-                }
-            }
-            result = sitesList;
-        } else if (VIEW_URLS.equals(name)) {
-            result = new ApiResponseList(name);
-            SiteNode root = session.getSiteTree().getRoot();
-            addUrlsToList(
-                    getParam(params, PARAM_BASE_URL, ""),
-                    root,
-                    new HashSet<>(),
-                    (ApiResponseList) result);
-        } else if (VIEW_CHILD_NODES.equals(name)) {
-            StructuralNode node;
-            String url = this.getParam(params, PARAM_URL, "");
+        ApiViewCommand command = viewCommands.get(name);
+        if(command != null){
+            return command.execute(params);
+        }
 
-            if (url.trim().length() == 0) {
-                node = SessionStructure.getRootNode(model);
-            } else {
-                try {
-                    node =
-                            SessionStructure.find(
-                                    Model.getSingleton(), new URI(url, false), null, null);
-                } catch (URIException e) {
-                    throw new ApiException(ApiException.Type.ILLEGAL_PARAMETER, PARAM_URL, e);
-                } catch (DatabaseException e) {
-                    throw new ApiException(ApiException.Type.INTERNAL_ERROR, e);
-                }
-            }
-            if (node == null) {
-                throw new ApiException(ApiException.Type.DOES_NOT_EXIST, PARAM_URL);
-            }
-            result = new ApiResponseList(name);
-
-            Iterator<StructuralNode> iter = node.getChildIterator();
-            while (iter.hasNext()) {
-                ((ApiResponseList) result).addItem(structuralNodeToResponse(iter.next()));
-            }
-        } else if (VIEW_ALERT.equals(name)) {
+        if (VIEW_ALERT.equals(name)) {
             return API.getInstance()
                     .getImplementors()
                     .get(AlertAPI.PREFIX)
@@ -1331,6 +1196,93 @@ public class CoreAPI extends ApiImplementor implements SessionListener {
         } else {
             throw new ApiException(ApiException.Type.BAD_VIEW);
         }
+        return result;
+    }
+
+    private ApiResponse handleHostsView(JSONObject params) throws ApiException {
+        ApiResponse result = new ApiResponseList(VIEW_HOSTS);
+        Session session = Model.getSingleton().getSession();
+        SiteNode root = session.getSiteTree().getRoot();
+
+        @SuppressWarnings("unchecked")
+        Enumeration<TreeNode> en = root.children();
+
+        while (en.hasMoreElements()) {
+            String site = ((SiteNode) en.nextElement()).getNodeName();
+
+            if (site.indexOf("//") >= 0) {
+                site = site.substring(site.indexOf("//") + 2);
+            }
+
+            if (site.indexOf(":") >= 0) {
+                site = site.substring(0, site.indexOf(":"));
+            }
+
+            ((ApiResponseList) result).addItem(new ApiResponseElement("host", site));
+        }
+
+        return result;
+    }
+
+    private ApiResponse handleSitesView(JSONObject params) throws ApiException {
+        Model model = Model.getSingleton();
+
+        ApiResponseList sitesList = new ApiResponseList(VIEW_SITES);
+        StructuralNode root = SessionStructure.getRootNode(model);
+
+        if (root != null) {
+            for (Iterator<StructuralNode> it = root.getChildIterator(); it.hasNext(); ) {
+                sitesList.addItem(new ApiResponseElement("site", it.next().getName()));
+            }
+        }
+
+        return sitesList;
+    }
+
+    private ApiResponse handleUrlsView(JSONObject params) throws ApiException {
+        Session session = Model.getSingleton().getSession();
+
+        ApiResponseList result = new ApiResponseList(VIEW_URLS);
+        SiteNode root = session.getSiteTree().getRoot();
+
+        addUrlsToList(
+                getParam(params, PARAM_BASE_URL, ""),
+                root,
+                new HashSet<>(),
+                result);
+
+        return result;
+    }
+
+    private ApiResponse handleChildNodesView(JSONObject params) throws ApiException {
+        Model model = Model.getSingleton();
+
+        StructuralNode node;
+        String url = this.getParam(params, PARAM_URL, "");
+
+        if (url.trim().length() == 0) {
+            node = SessionStructure.getRootNode(model);
+        } else {
+            try {
+                node = SessionStructure.find(model, new URI(url, false), null, null);
+            } catch (URIException e) {
+                throw new ApiException(ApiException.Type.ILLEGAL_PARAMETER, PARAM_URL, e);
+            } catch (DatabaseException e) {
+                throw new ApiException(ApiException.Type.INTERNAL_ERROR, e);
+            }
+        }
+
+        if (node == null) {
+            throw new ApiException(ApiException.Type.DOES_NOT_EXIST, PARAM_URL);
+        }
+
+        ApiResponseList result = new ApiResponseList(VIEW_CHILD_NODES);
+
+        Iterator<StructuralNode> iter = node.getChildIterator();
+        while (iter.hasNext()) {
+            result.addItem(structuralNodeToResponse(iter.next()));
+        }
+
         return result;
     }
 
@@ -1797,6 +1749,14 @@ public class CoreAPI extends ApiImplementor implements SessionListener {
     private interface Processor<T> {
 
         void process(T object);
+    }
+
+    private interface ApiActionCommand{
+        ApiResponse execute(JSONObject params) throws ApiException;
+    }
+
+    private interface ApiViewCommand{
+        ApiResponse execute(JSONObject params) throws ApiException;
     }
 
     private static class CounterProcessor<T> implements Processor<T> {
