@@ -79,47 +79,66 @@ public class OptionsDialog extends AbstractParamDialog {
                     new ActionListener() {
                         @Override
                         public void actionPerformed(ActionEvent e) {
-                            if (View.getSingleton()
-                                            .showConfirmDialog(
-                                                    OptionsDialog.this,
-                                                    Constant.messages.getString(
-                                                            "options.dialog.reset.warn"))
-                                    == JOptionPane.OK_OPTION) {
-                                try {
-                                    OptionsParam params = Model.getSingleton().getOptionsParam();
-                                    // Force the install files to be copied
-                                    Constant.getInstance()
-                                            .copyDefaultConfigs(
-                                                    new File(Constant.getInstance().FILE_CONFIG),
-                                                    true);
-                                    // Load them
-                                    params.load(Constant.getInstance().FILE_CONFIG);
-                                    // Force a reload in all of the option params
-                                    params.reloadConfigParamSets();
-                                    params.resetAll();
-
-                                    resetAllPanels();
-                                    // Reinit the dialog
-                                    OptionsDialog.this.initParam(params);
-
-                                } catch (Exception e1) {
-                                    LOGGER.error("Failed to reset to defaults:", e1);
-                                    View.getSingleton()
-                                            .showWarningDialog(
-                                                    Constant.messages.getString(
-                                                            "options.dialog.reset.error",
-                                                            e1.getMessage()));
-                                }
+                            if (confirmReset()) {
+                                new ResetOptionsCommand().execute();
                             }
                         }
                     });
             extraButtons = new JButton[] {resetButton};
         }
+
         return extraButtons;
     }
 
-    private void resetAllPanels() {
-        for (AbstractParamPanel panel : OptionsDialog.this.getPanels()) {
+    private boolean confirmReset() {
+        return View.getSingleton()
+                        .showConfirmDialog(
+                                OptionsDialog.this,
+                                Constant.messages.getString("options.dialog.reset.warn"))
+                == JOptionPane.OK_OPTION;
+    }
+
+    private final class ResetOptionsCommand {
+
+        private void execute() {
+            try {
+                OptionsParam params = resetOptionsToDefaults();
+                params.resetAll();
+                resetAllPanels();
+
+                // Reinit the dialog
+                OptionsDialog.this.initParam(params);
+            } catch (Exception e) {
+                LOGGER.error("Failed to reset to defaults:", e);
+                View.getSingleton()
+                        .showWarningDialog(
+                                Constant.messages.getString(
+                                        "options.dialog.reset.error", e.getMessage()));
+            }
+        }
+
+        private OptionsParam resetOptionsToDefaults() throws Exception {
+            OptionsParam params = Model.getSingleton().getOptionsParam();
+
+            // Force the install files to be copied
+            Constant.getInstance()
+                    .copyDefaultConfigs(new File(Constant.getInstance().FILE_CONFIG), true);
+
+            // Load them
+            params.load(Constant.getInstance().FILE_CONFIG);
+
+            // Force a reload in all of the option params
+            params.reloadConfigParamSets();
+            return params;
+        }
+
+        private void resetAllPanels() {
+            for (AbstractParamPanel panel : OptionsDialog.this.getPanels()) {
+                resetPanel(panel);
+            }
+        }
+
+        private void resetPanel(AbstractParamPanel panel) {
             try {
                 panel.reset();
             } catch (Exception e) {
