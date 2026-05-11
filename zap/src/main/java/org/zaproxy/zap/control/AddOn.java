@@ -62,12 +62,11 @@ import org.parosproxy.paros.core.scanner.AbstractPlugin;
 import org.parosproxy.paros.extension.Extension;
 import org.zaproxy.zap.Version;
 import org.zaproxy.zap.control.AddOn.AddOnRunRequirements;
+//import org.zaproxy.zap.control.AddOn.AddOnRunRequirements;
 import org.zaproxy.zap.control.BaseZapAddOnXmlData.AddOnDep;
 import org.zaproxy.zap.control.BaseZapAddOnXmlData.Dependencies;
 import org.zaproxy.zap.control.BaseZapAddOnXmlData.ExtensionWithDeps;
 import org.zaproxy.zap.extension.pscan.PluginPassiveScanner;
-
-import org.parosproxy.paros.control.Control;
 
 public class AddOn {
 
@@ -99,13 +98,13 @@ public class AddOn {
         release
     }
 
-    private static final List<RequirementCheck> REQUIREMENT_CHECKS = List.of(
-        new MissingLibsCheck(),
-        new InstalledVersionCheck(),
-        new CycleCheck(),
-        new JavaVersionCheck(),
-        new DependencyVersionCheck()
-    );
+    private static final List<RequirementCheck> REQUIREMENT_CHECKS =
+        List.of(
+            new MissingLibsCheck(),
+            new InstalledVersionCheck(),
+            new CycleCheck(),
+            new JavaVersionCheck(),
+            new DependencyVersionCheck());
 
     private static ZapRelease v2_4 = new ZapRelease("2.4.0");
 
@@ -1218,14 +1217,16 @@ public class AddOn {
             AddOn addOn,
             boolean checkLibs) {
 
-            RequirementEvaluation evaluation = new RequirementEvaluation(availableAddOns, requirements, parent, addOn, checkLibs);
+        RequirementEvaluation evaluation =
+                new RequirementEvaluation(availableAddOns, requirements, parent, addOn, checkLibs);
 
-            for (RequirementCheck check : REQUIREMENT_CHECKS) {
-                if (!check.evaluate(evaluation)) {
-                    return;
-                }
+        for (RequirementCheck check : REQUIREMENT_CHECKS) {
+            if (!check.evaluate(evaluation)) {
+                return;
             }
         }
+    }
+
     private static void checkExtensionsWithDeps(
             Collection<AddOn> availableAddOns,
             AddOnRunRequirements requirements,
@@ -2421,10 +2422,11 @@ public class AddOn {
     private static class InstalledVersionCheck implements RequirementCheck {
         @Override
         public boolean evaluate(RequirementEvaluation evaluation) {
-            AddOn installedAddOn = getAddOn(Control.getSingleton().getExtensionLoader().getInstalledAddOns(), evaluation.addOn.getId());
+            AddOn installedVersion = getAddOn(evaluation.availableAddOns, evaluation.addOn.getId());
 
-            if (installedAddOn != null && installedAddOn.getVersion().compareTo(evaluation.addOn.getVersion()) >= 0) {
-                evaluation.requirements.setIssue(BaseRunRequirements.DependencyIssue.OLDER_VERSION, installedAddOn);
+            if (installedVersion != null && !evaluation.addOn.equals(installedVersion)) {
+                evaluation.requirements.setIssue(
+                        BaseRunRequirements.DependencyIssue.OLDER_VERSION, installedVersion);
                 return false;
             }
 
@@ -2436,7 +2438,9 @@ public class AddOn {
         @Override
         public boolean evaluate(RequirementEvaluation evaluation) {
             if (!evaluation.requirements.addDependency(evaluation.parent, evaluation.addOn)) {
-                evaluation.requirements.setIssue(BaseRunRequirements.DependencyIssue.CYCLIC);
+                evaluation.requirements.setIssue(
+                        BaseRunRequirements.DependencyIssue.CYCLIC,
+                        evaluation.requirements.getDependencies().toArray());
                 return false;
             }
 
@@ -2450,8 +2454,8 @@ public class AddOn {
             String minimumJavaVersion = evaluation.addOn.getMinimumJavaVersion();
 
             if (!minimumJavaVersion.isEmpty() && !evaluation.addOn.canRunInCurrentJavaVersion()) {
-                evaluation.requirements.setMinimumJavaVersionIssue(evaluation.addOn, minimumJavaVersion);
-                return false;
+                evaluation.requirements.setMinimumJavaVersionIssue(
+                        evaluation.addOn, minimumJavaVersion);
             }
 
             return true;
@@ -2480,14 +2484,12 @@ public class AddOn {
                     return false;
                 }
 
-                if (!dependency.getVersion().isEmpty()) {
-                    if (!versionMatches(addOnDep, dependency)) {
-                        evaluation.requirements.setIssue(
-                                BaseRunRequirements.DependencyIssue.VERSION,
-                                addOnDep,
-                                dependency.getVersion());
-                        return false;
-                    }
+                if (!dependency.getVersion().isEmpty() && !versionMatches(addOnDep, dependency)) {
+                    evaluation.requirements.setIssue(
+                            BaseRunRequirements.DependencyIssue.VERSION,
+                            addOnDep,
+                            dependency.getVersion());
+                    return false;
                 }
 
                 calculateRunRequirementsImpl(
@@ -2496,6 +2498,10 @@ public class AddOn {
                         evaluation.addOn,
                         addOnDep,
                         evaluation.checkLibs);
+
+                if (evaluation.requirements.hasDependencyIssue()) {
+                    return false;
+                }
             }
 
             return true;
