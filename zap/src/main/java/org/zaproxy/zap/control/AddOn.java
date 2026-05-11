@@ -61,6 +61,8 @@ import org.parosproxy.paros.Constant;
 import org.parosproxy.paros.core.scanner.AbstractPlugin;
 import org.parosproxy.paros.extension.Extension;
 import org.zaproxy.zap.Version;
+import org.zaproxy.zap.control.AddOn.AddOnRunRequirements;
+//import org.zaproxy.zap.control.AddOn.AddOnRunRequirements;
 import org.zaproxy.zap.control.BaseZapAddOnXmlData.AddOnDep;
 import org.zaproxy.zap.control.BaseZapAddOnXmlData.Dependencies;
 import org.zaproxy.zap.control.BaseZapAddOnXmlData.ExtensionWithDeps;
@@ -95,6 +97,14 @@ public class AddOn {
         weekly,
         release
     }
+
+    private static final List<RequirementCheck> REQUIREMENT_CHECKS =
+        List.of(
+            new MissingLibsCheck(),
+            new InstalledVersionCheck(),
+            new CycleCheck(),
+            new JavaVersionCheck(),
+            new DependencyVersionCheck());
 
     private static ZapRelease v2_4 = new ZapRelease("2.4.0");
 
@@ -1206,61 +1216,13 @@ public class AddOn {
             AddOn parent,
             AddOn addOn,
             boolean checkLibs) {
-        if (checkLibs && addOn.hasMissingLibs()) {
-            requirements.setMissingLibsIssue(addOn);
-            return;
-        }
 
-        AddOn installedVersion = getAddOn(availableAddOns, addOn.getId());
-        if (installedVersion != null && !addOn.equals(installedVersion)) {
-            requirements.setIssue(
-                    BaseRunRequirements.DependencyIssue.OLDER_VERSION, installedVersion);
-            LOGGER.debug(
-                    "Add-on {} not runnable, old version still installed: {}",
-                    addOn,
-                    installedVersion);
-            return;
-        }
+        RequirementEvaluation evaluation =
+                new RequirementEvaluation(availableAddOns, requirements, parent, addOn, checkLibs);
 
-        if (!requirements.addDependency(parent, addOn)) {
-            LOGGER.warn("Cyclic dependency detected with: {}", requirements.getDependencies());
-            requirements.setIssue(
-                    BaseRunRequirements.DependencyIssue.CYCLIC, requirements.getDependencies());
-            return;
-        }
-
-        if (addOn.dependencies == null) {
-            return;
-        }
-
-        if (!addOn.canRunInCurrentJavaVersion()) {
-            requirements.setMinimumJavaVersionIssue(addOn, addOn.dependencies.getJavaVersion());
-        }
-
-        for (AddOnDep dependency : addOn.dependencies.getAddOns()) {
-            String addOnId = dependency.getId();
-            if (addOnId != null) {
-                AddOn addOnDep = getAddOn(availableAddOns, addOnId);
-                if (addOnDep == null) {
-                    requirements.setIssue(BaseRunRequirements.DependencyIssue.MISSING, addOnId);
-                    return;
-                }
-
-                if (!dependency.getVersion().isEmpty()) {
-                    if (!versionMatches(addOnDep, dependency)) {
-                        requirements.setIssue(
-                                BaseRunRequirements.DependencyIssue.VERSION,
-                                addOnDep,
-                                dependency.getVersion());
-                        return;
-                    }
-                }
-
-                calculateRunRequirementsImpl(
-                        availableAddOns, requirements, addOn, addOnDep, checkLibs);
-                if (requirements.hasDependencyIssue()) {
-                    return;
-                }
+        for (RequirementCheck check : REQUIREMENT_CHECKS) {
+            if (!check.evaluate(evaluation)) {
+                return;
             }
         }
     }
@@ -2417,5 +2379,132 @@ public class AddOn {
             }
         }
         return null;
+    }
+
+    private interface RequirementCheck {
+        boolean evaluate(RequirementEvaluation evaluation);
+    }
+
+    private static class RequirementEvaluation {
+        private final Collection<AddOn> availableAddOns;
+        private final BaseRunRequirements requirements;
+        private final AddOn parent;
+        private final AddOn addOn;
+        private final boolean checkLibs;
+
+        RequirementEvaluation(
+                Collection<AddOn> availableAddOns,
+                BaseRunRequirements requirements,
+                AddOn parent,
+                AddOn addOn,
+                boolean checkLibs) {
+
+            this.availableAddOns = availableAddOns;
+            this.requirements = requirements;
+            this.parent = parent;
+            this.addOn = addOn;
+            this.checkLibs = checkLibs;
+        }
+    }
+
+    private static class MissingLibsCheck implements RequirementCheck {
+        @Override
+        public boolean evaluate(RequirementEvaluation evaluation) {
+            if (evaluation.checkLibs && evaluation.addOn.hasMissingLibs()) {
+                evaluation.requirements.setMissingLibsIssue(evaluation.addOn);
+                return false;
+            }
+
+            return true;
+        }
+    }
+
+    private static class InstalledVersionCheck implements RequirementCheck {
+        @Override
+        public boolean evaluate(RequirementEvaluation evaluation) {
+            AddOn installedVersion = getAddOn(evaluation.availableAddOns, evaluation.addOn.getId());
+
+            if (installedVersion != null && !evaluation.addOn.equals(installedVersion)) {
+                evaluation.requirements.setIssue(
+                        BaseRunRequirements.DependencyIssue.OLDER_VERSION, installedVersion);
+                return false;
+            }
+
+            return true;
+        }
+    }
+
+    private static class CycleCheck implements RequirementCheck {
+        @Override
+        public boolean evaluate(RequirementEvaluation evaluation) {
+            if (!evaluation.requirements.addDependency(evaluation.parent, evaluation.addOn)) {
+                evaluation.requirements.setIssue(
+                        BaseRunRequirements.DependencyIssue.CYCLIC,
+                        evaluation.requirements.getDependencies().toArray());
+                return false;
+            }
+
+            return true;
+        }
+    }
+
+    private static class JavaVersionCheck implements RequirementCheck {
+        @Override
+        public boolean evaluate(RequirementEvaluation evaluation) {
+            String minimumJavaVersion = evaluation.addOn.getMinimumJavaVersion();
+
+            if (!minimumJavaVersion.isEmpty() && !evaluation.addOn.canRunInCurrentJavaVersion()) {
+                evaluation.requirements.setMinimumJavaVersionIssue(
+                        evaluation.addOn, minimumJavaVersion);
+            }
+
+            return true;
+        }
+    }
+
+    private static class DependencyVersionCheck implements RequirementCheck {
+        @Override
+        public boolean evaluate(RequirementEvaluation evaluation) {
+            if (evaluation.addOn.dependencies == null) {
+                return true;
+            }
+
+            for (AddOnDep dependency : evaluation.addOn.dependencies.getAddOns()) {
+                String addOnId = dependency.getId();
+
+                if (addOnId == null) {
+                    continue;
+                }
+
+                AddOn addOnDep = getAddOn(evaluation.availableAddOns, addOnId);
+
+                if (addOnDep == null) {
+                    evaluation.requirements.setIssue(
+                            BaseRunRequirements.DependencyIssue.MISSING, addOnId);
+                    return false;
+                }
+
+                if (!dependency.getVersion().isEmpty() && !versionMatches(addOnDep, dependency)) {
+                    evaluation.requirements.setIssue(
+                            BaseRunRequirements.DependencyIssue.VERSION,
+                            addOnDep,
+                            dependency.getVersion());
+                    return false;
+                }
+
+                calculateRunRequirementsImpl(
+                        evaluation.availableAddOns,
+                        evaluation.requirements,
+                        evaluation.addOn,
+                        addOnDep,
+                        evaluation.checkLibs);
+
+                if (evaluation.requirements.hasDependencyIssue()) {
+                    return false;
+                }
+            }
+
+            return true;
+        }
     }
 }
