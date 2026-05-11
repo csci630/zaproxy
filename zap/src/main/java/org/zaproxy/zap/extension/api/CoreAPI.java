@@ -105,7 +105,6 @@ public class CoreAPI extends ApiImplementor implements SessionListener {
     private static final String ACTION_SAVE_SESSION = "saveSession";
     private static final String ACTION_SNAPSHOT_SESSION = "snapshotSession";
 
-    private final Map<String, ApiActionCommand> actionCommands = new HashMap<>();
     private final Map<String, ApiViewCommand> viewCommands = new HashMap<>();
 
     private static final String ACTION_ACCESS_URL = "accessUrl";
@@ -499,15 +498,10 @@ public class CoreAPI extends ApiImplementor implements SessionListener {
                 deprecatedNetworkApi(new ApiAction("setOptionUseProxyChainAuth", PARAMS_BOOLEAN)));
         addApiAction(deprecatedNetworkApi(new ApiAction("setOptionUseSocksProxy", PARAMS_BOOLEAN)));
 
-        registerActionCommands();
         registerViewCommands();
     }
 
-    private void registerActionCommands(){
-        actionCommands.put(ACTION_SAVE_SESSION.toLowerCase(), this::handleSaveSession);
-    }
-
-    private void registerViewCommands(){
+    private void registerViewCommands() {
         viewCommands.put(VIEW_HOSTS, this::handleHostsView);
         viewCommands.put(VIEW_SITES, this::handleSitesView);
         viewCommands.put(VIEW_URLS, this::handleUrlsView);
@@ -543,11 +537,6 @@ public class CoreAPI extends ApiImplementor implements SessionListener {
 
     @Override
     public ApiResponse handleApiAction(String name, JSONObject params) throws ApiException {
-
-        ApiActionCommand command = actionCommands.get(name.toLowerCase());
-        if(command != null){
-            return command.execute(params);
-        }
 
         Session session = Model.getSingleton().getSession();
 
@@ -596,6 +585,154 @@ public class CoreAPI extends ApiImplementor implements SessionListener {
                     };
             thread.start();
 
+        } else if (ACTION_SAVE_SESSION.equalsIgnoreCase(
+                name)) { // Ignore case for backwards compatibility
+            Path sessionPath = getSessionPath(params.getString(PARAM_SESSION));
+            String filename = sessionPath.toAbsolutePath().toString();
+
+            final boolean overwrite = getParam(params, PARAM_OVERWRITE_SESSION, false);
+
+            if (Files.exists(sessionPath)) {
+                boolean sameSession = false;
+                if (overwrite && !session.isNewState()) {
+                    try {
+                        sameSession =
+                                Files.isSameFile(Paths.get(session.getFileName()), sessionPath);
+                    } catch (IOException e) {
+                        LOGGER.error("Failed to check if same session path:", e);
+                        throw new ApiException(ApiException.Type.INTERNAL_ERROR, e.getMessage());
+                    }
+                }
+
+                if (!overwrite || sameSession) {
+                    throw new ApiException(ApiException.Type.ALREADY_EXISTS, filename);
+                }
+            }
+
+            this.savingSession = true;
+            try {
+                Control.getSingleton().saveSession(filename, this);
+            } catch (Exception e) {
+                LOGGER.error("Failed to save the session:", e);
+                this.savingSession = false;
+                throw new ApiException(ApiException.Type.INTERNAL_ERROR, e.getMessage());
+            }
+
+            // Wait for notification that its worked ok
+            try {
+                while (this.savingSession) {
+                    Thread.sleep(200);
+                }
+            } catch (InterruptedException e) {
+                // Probably not an error
+                LOGGER.debug(e.getMessage(), e);
+            }
+            LOGGER.debug("Can now return after saving session");
+        } else if (ACTION_SNAPSHOT_SESSION.equalsIgnoreCase(
+                name)) { // Ignore case for backwards compatibility
+            if (session.isNewState()) {
+                throw new ApiException(ApiException.Type.DOES_NOT_EXIST);
+            }
+            List<String> actions = Control.getSingleton().getExtensionLoader().getActiveActions();
+            if (!actions.isEmpty()) {
+                throw new ApiException(
+                        ApiException.Type.BAD_STATE,
+                        "Active actions prevent the session snapshot: " + actions);
+            }
+
+            String fileName = ApiUtils.getOptionalStringParam(params, PARAM_SESSION);
+            if (fileName == null || fileName.isEmpty()) {
+                fileName = session.getFileName();
+                if (fileName.endsWith(".session")) {
+                    fileName = fileName.substring(0, fileName.length() - 8);
+                }
+                fileName += "-" + dateFormat.format(new Date()) + ".session";
+            } else {
+                Path sessionPath = getSessionPath(fileName);
+                fileName = sessionPath.toAbsolutePath().toString();
+
+                if (Files.exists(sessionPath)) {
+                    final boolean overwrite = getParam(params, PARAM_OVERWRITE_SESSION, false);
+                    boolean sameSession = false;
+                    try {
+                        sameSession =
+                                Files.isSameFile(Paths.get(session.getFileName()), sessionPath);
+                    } catch (IOException e) {
+                        LOGGER.error("Failed to check if same session path:", e);
+                        throw new ApiException(ApiException.Type.INTERNAL_ERROR, e.getMessage());
+                    }
+                    if (!overwrite || sameSession) {
+                        throw new ApiException(ApiException.Type.ALREADY_EXISTS, fileName);
+                    }
+                }
+            }
+
+            this.savingSession = true;
+            try {
+                Control.getSingleton().snapshotSession(fileName, this);
+            } catch (Exception e) {
+                LOGGER.error("Failed to snapshot the session:", e);
+                this.savingSession = false;
+                throw new ApiException(ApiException.Type.INTERNAL_ERROR, e.getMessage());
+            }
+
+            // Wait for notification that its worked ok
+            try {
+                while (this.savingSession) {
+                    Thread.sleep(200);
+                }
+            } catch (InterruptedException e) {
+                // Probably not an error
+                LOGGER.debug(e.getMessage(), e);
+            }
+            LOGGER.debug("Can now return after saving session");
+        } else if (ACTION_LOAD_SESSION.equalsIgnoreCase(
+                name)) { // Ignore case for backwards compatibility
+            Path sessionPath = getSessionPath(params.getString(PARAM_SESSION));
+            String filename = sessionPath.toAbsolutePath().toString();
+
+            if (!Files.exists(sessionPath)) {
+                throw new ApiException(ApiException.Type.DOES_NOT_EXIST, filename);
+            }
+            try {
+                Control.getSingleton().runCommandLineOpenSession(filename);
+            } catch (Exception e) {
+                LOGGER.error("Failed to load the session:", e);
+                throw new ApiException(ApiException.Type.INTERNAL_ERROR, e.getMessage());
+            }
+        } else if (ACTION_NEW_SESSION.equalsIgnoreCase(
+                name)) { // Ignore case for backwards compatibility
+            String sessionName = null;
+            try {
+                sessionName = params.getString(PARAM_SESSION);
+            } catch (Exception e1) {
+                // Ignore
+            }
+            if (sessionName == null || sessionName.length() == 0) {
+                // Create a new 'unnamed' session
+                Control.getSingleton().discardSession();
+                try {
+                    Control.getSingleton().newSession();
+                } catch (Exception e) {
+                    LOGGER.error("Failed to create a new session:", e);
+                    throw new ApiException(ApiException.Type.INTERNAL_ERROR, e.getMessage());
+                }
+            } else {
+                Path sessionPath = getSessionPath(sessionName);
+                String filename = sessionPath.toAbsolutePath().toString();
+
+                final boolean overwrite = getParam(params, PARAM_OVERWRITE_SESSION, false);
+
+                if (Files.exists(sessionPath) && !overwrite) {
+                    throw new ApiException(ApiException.Type.ALREADY_EXISTS, filename);
+                }
+                try {
+                    Control.getSingleton().runCommandLineNewSession(filename);
+                } catch (Exception e) {
+                    LOGGER.error("Failed to create a new session:", e);
+                    throw new ApiException(ApiException.Type.INTERNAL_ERROR, e.getMessage());
+                }
+            }
         } else if (ACTION_CLEAR_EXCLUDED_FROM_PROXY.equals(name)) {
             try {
                 session.setExcludeFromProxyRegexs(new ArrayList<>());
@@ -822,52 +959,6 @@ public class CoreAPI extends ApiImplementor implements SessionListener {
         return childPath;
     }
 
-    private ApiResponse handleSaveSession(JSONObject params) throws ApiException {
-        Session session = Model.getSingleton().getSession();
-
-        Path sessionPath = getSessionPath(params.getString(PARAM_SESSION));
-        String filename = sessionPath.toAbsolutePath().toString();
-
-        final boolean overwrite = getParam(params, PARAM_OVERWRITE_SESSION, false);
-
-        if (Files.exists(sessionPath)) {
-            boolean sameSession = false;
-            if (overwrite && !session.isNewState()) {
-                try {
-                    sameSession = Files.isSameFile(Paths.get(session.getFileName()), sessionPath);
-                } catch (IOException e) {
-                    LOGGER.error("Failed to check if same session path:", e);
-                    throw new ApiException(ApiException.Type.INTERNAL_ERROR, e.getMessage());
-                }
-            }
-
-            if (!overwrite || sameSession) {
-                throw new ApiException(ApiException.Type.ALREADY_EXISTS, filename);
-            }
-        }
-
-        this.savingSession = true;
-        try {
-            Control.getSingleton().saveSession(filename, this);
-        } catch (Exception e) {
-            LOGGER.error("Failed to save the session:", e);
-            this.savingSession = false;
-            throw new ApiException(ApiException.Type.INTERNAL_ERROR, e.getMessage());
-        }
-
-        try {
-            while (this.savingSession) {
-                Thread.sleep(200);
-            }
-        } catch (InterruptedException e) {
-            LOGGER.debug(e.getMessage(), e);
-        }
-
-        LOGGER.debug("Can now return after saving session");
-        
-        return ApiResponseElement.OK;
-    }
-
     private static Path getSessionPath(String path) throws ApiException {
         try {
             return SessionUtils.getSessionPath(path);
@@ -1061,7 +1152,7 @@ public class CoreAPI extends ApiImplementor implements SessionListener {
         Session session = model.getSession();
 
         ApiViewCommand command = viewCommands.get(name);
-        if(command != null){
+        if (command != null) {
             return command.execute(params);
         }
 
@@ -1751,11 +1842,7 @@ public class CoreAPI extends ApiImplementor implements SessionListener {
         void process(T object);
     }
 
-    private interface ApiActionCommand{
-        ApiResponse execute(JSONObject params) throws ApiException;
-    }
-
-    private interface ApiViewCommand{
+    private interface ApiViewCommand {
         ApiResponse execute(JSONObject params) throws ApiException;
     }
 
